@@ -1,7 +1,6 @@
 from PIL import Image
 from config import Config
 from utils import get_index, search, display_html
-from model import VIT_MSN
 from io import BytesIO
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import HTMLResponse
@@ -43,14 +42,6 @@ except storage.exceptions.NotFound:
 except Exception as e:
     logger.error(f"Error retrieving bucket {GCS_BUCKET_NAME}: {e}")
     raise HTTPException(status_code=500, detail=f"Error retrieving bucket {GCS_BUCKET_NAME}: {e}")
-
-DEVICE = Config.DEVICE
-model = VIT_MSN(device=DEVICE)
-model.eval()
-if DEVICE == "cuda":
-    for param in model.parameters():
-        param.data = param.data.float()
-logger.info(f"Load model to {DEVICE} successfully")
 
 app = FastAPI()
 
