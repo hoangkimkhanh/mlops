@@ -15,6 +15,7 @@ import redis
 import base64
 import json
 import numpy as np
+from typing import List
 
 db = redis.StrictRedis(
     host=Config.REDIS_HOST,
@@ -59,28 +60,36 @@ async def push_image(file: UploadFile = File(...)):
         image_bytes = await file.read()
         image = Image.open(BytesIO(image_bytes)).convert("RGB")
         # check 
-        feature = model.get_features([image]).flatten().tolist() #reshape(1,-1)
-        # match_ids = search(index, feature, top_k=Config.TOP_K)
-        # if match_ids:
-        #     match_vectors = []
-        #     for match_id in match_ids:
-        #         logger.info(f"Fetching match ID: {match_id}")
-        #         match_item = index.fetch(ids=[match_id])
-        #         if match_item and match_id in match_item:
-        #             match_vectors.append(np.array(match_item[match_id]['values']))
-        #         else:
-        #             logger.warning(f"Match ID {match_id} not found in fetch response.")
-        #     match_vectors_np = np.array(match_vectors)
-        #     logger.info(f"Match vectors shape: {match_vectors_np.shape}")
-        #     similarities = cosine_similarity([feature], match_vectors)
-        #     for i, similarity in enumerate(similarities[0]):
-        #         if similarity > Config.SIMILARITY_THRESHOLD:
-        #             logger.info(f"Image already exists with ID: {match_ids[i]} and similarity: {similarity}")
-        #             return {"message": "Image already exists!", "file_id": match_ids[i], "similarity": similarity}
+        # feature = model.get_features([image]).flatten().tolist() #reshape(1,-1)
 
         # generate a unique id for the image
         unique_id = str(uuid.uuid4())
-        file_extension = file.filename.split(".")[-1]
+        image_str = base64.b64encode(np.asarray(image)).decode("utf-8")
+        extract_object = {
+            "id": unique_id,
+            "width": image.width,
+            "height": image.height
+        }
+        start_time = time.time()
+        db.set(Config.IMAGE_PREFIX + unique_id, image_str)
+        db.rpush(Config.REDIS_QUEUE, json.dumps(extract_object))
+        end_time = time.time()
+        logger.info(f"Pushed image to Redis queue in {end_time - start_time:.4f} seconds")
+        
+        t0 = time.time()
+        while True:
+            rq_time = time.time() - t0
+            if rq_time > Config.REQUEST_TIMEOUT:
+                break
+            out = db.get(unique_id)
+            if not out:
+                continue
+            db.delete(unique_id)
+
+            feature = np.frombuffer(base64.b64decode(out), dtype=np.float32)
+            feature = feature.reshape(1, -1).flatten().tolist()
+
+        file_extension = "JPEG" if file.filename.split(".")[-1].upper() == "JPG" else file.filename.split(".")[-1].upper()  
         gcs_file_path = f"images/{unique_id}.{file_extension}"
 
         # upload the file to GCS
@@ -122,12 +131,14 @@ async def image_search(file: UploadFile = File(...)):
         image_str = base64.b64encode(np.asarray(image)).decode("utf-8")
         extract_object = {
             "id": image_id,
-            "image": image_str,
             "width": image.width,
             "height": image.height
         }
+        start_time = time.time()
+        db.set(Config.IMAGE_PREFIX + image_id, image_str)
         db.rpush(Config.REDIS_QUEUE, json.dumps(extract_object))
-
+        end_time = time.time()
+        logger.info(f"Pushed image to Redis queue in {end_time - start_time:.4f} seconds")
         match_ids = []
         t0 = time.time()
 
@@ -144,25 +155,30 @@ async def image_search(file: UploadFile = File(...)):
             feature = feature.reshape(1, -1).flatten().tolist()
             # feature = model.get_features([image]).flatten().tolist()
             start_time = time.time()
-            match_ids = search(index, feature, top_k=Config.TOP_K)
+            match_ids = search(index, feature, top_k=Config.TOP_K * 4)
             elapsed_time = time.time() - start_time
             logger.info(f'Search completed in {elapsed_time:.4f} seconds')
+            response = index.fetch(ids=match_ids)
             break
 
-        response = index.fetch(ids=match_ids)
         # logger.info(f"Fetch response: {response}")
         images_url = []
         for match_id in match_ids:
+            if len(images_url) == Config.TOP_K:
+                break
             if match_id in response.get('vectors', {}):
                 metadata = response['vectors'][match_id].get("metadata", {})
                 gcs_path = metadata.get("gcs_path", "")
                 blob = bucket.blob(gcs_path)
+                if not blob.exists():
+                    logger.warning(f"Image with GCS path {gcs_path} does not exist in bucket.")
+                    continue
                 signed_url = blob.generate_signed_url(
                     version="v4",
                     expiration=datetime.timedelta(hours=1),
                     method="GET")
                 images_url.append(signed_url)
-                logger.info(f"Found URL for match ID {match_id}: {signed_url}")
+                logger.info(f"Found URL for match ID {match_id}")
             else:
                 logger.warning(f"Match ID {match_id} not found in response.")
         return images_url

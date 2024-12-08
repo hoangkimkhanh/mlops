@@ -16,3 +16,4 @@ class Config:
     REDIS_PORT = 6379
     REDIS_QUEUE = "extract_feature_queue"
     REQUEST_TIMEOUT = 10
+    IMAGE_PREFIX = "image_"
