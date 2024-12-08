@@ -130,20 +130,24 @@ async def image_search(file: UploadFile = File(...)):
 
         match_ids = []
         t0 = time.time()
+
         while True:
-            rq_time = time.time - t0
+            rq_time = time.time() - t0
             if rq_time > Config.REQUEST_TIMEOUT:
                 break
             out = db.get(image_id)
             if not out:
                 continue
-            feature = np.frombuffer(out, dtype=np.float32)
+            db.delete(image_id)
 
+            feature = np.frombuffer(base64.b64decode(out), dtype=np.float32)
+            feature = feature.reshape(1, -1).flatten().tolist()
             # feature = model.get_features([image]).flatten().tolist()
             start_time = time.time()
             match_ids = search(index, feature, top_k=Config.TOP_K)
             elapsed_time = time.time() - start_time
             logger.info(f'Search completed in {elapsed_time:.4f} seconds')
+            break
 
         response = index.fetch(ids=match_ids)
         # logger.info(f"Fetch response: {response}")

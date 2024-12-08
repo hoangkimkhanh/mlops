@@ -6,10 +6,10 @@ import yaml
 import time
 import configparser
 import base64
-import cv2
 import torch
 import numpy as np
 
+from types import SimpleNamespace
 from PIL import Image
 from loguru import logger
 import utils
@@ -42,7 +42,10 @@ class FeatureExtraction():
             for req in raw_requests:
                 if req is None:
                     continue
-                req_payload = json.loads(req)
+                req_payload = json.loads(
+                    req,
+                    object_hook= lambda x: SimpleNamespace(**x)  # convert to object
+                )
                 verified_request.append(req_payload)
 
             if len(verified_request) == 0:
@@ -56,15 +59,15 @@ class FeatureExtraction():
             images = []
             image_ids = []
             for payload in verified_request:
-                img_str = payload["image"]
-                img_shape = (payload["height"], payload["width"])
+                img_str = payload.image
+                img_shape = (payload.height, payload.width, 3)
                 img_arr = np.frombuffer(
-                    base64.decodebytes(img_str),
+                    base64.b64decode(img_str),
                     dtype=np.uint8
                 )
                 img_arr = img_arr.reshape(img_shape)
                 images.append(Image.fromarray(img_arr).convert("RGB"))
-                image_ids.append(payload["id"])
+                image_ids.append(payload.id)
 
             start_extract = time.time()
             features = self.extractor.get_features(images)

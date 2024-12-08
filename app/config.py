@@ -15,4 +15,4 @@ class Config:
     REDIS_DB = 0
     REDIS_PORT = 6379
     REDIS_QUEUE = "extract_feature_queue"
-    REQUEST_TIMEOUT = 0.5
+    REQUEST_TIMEOUT = 10
