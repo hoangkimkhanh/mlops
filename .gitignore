@@ -1,0 +1,9 @@
+ansible/secrets/*
+terraform/*
+app/.env
+app/dynamic-branch-441814-f1-45971c71ec3a.json
+helm/*
+app/__pycache__/*
+app/data/*
+app/.tmp/*
+app/create_data.py
